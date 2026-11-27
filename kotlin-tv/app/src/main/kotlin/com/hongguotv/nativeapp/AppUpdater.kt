@@ -70,7 +70,7 @@ class AppUpdater(private val activity: Activity, private val idle: () -> Boolean
         active = true; main.removeCallbacks(poll); main.postDelayed(poll, 8000)
         if (permissionRequested) {
             permissionRequested = false
-            if (activity.packageManager.canRequestPackageInstalls()) install()
+            if (canInstallPackages()) install()
             else { status = "安装权限未开启，可在这里再次安装"; show(anchor) }
         }
     }
@@ -204,14 +204,42 @@ class AppUpdater(private val activity: Activity, private val idle: () -> Boolean
         )
     }
 
+    /**
+     * 本应用是否被允许安装未知来源应用。
+     *
+     * [PackageManager.canRequestPackageInstalls] 是 API 26 才有的接口；21—25 没有这种按应用
+     * 查询，由系统「未知来源」总开关统一管控，因此直接按允许处理。
+     */
+    private fun canInstallPackages(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            activity.packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+
+    /**
+     * 跳到系统的「安装未知应用」授权页。
+     *
+     * [Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES] 是 API 26 才有的入口；低版本没有按应用的
+     * 授权页，退回系统安全设置页。
+     */
+    private fun openInstallPermissionSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))
+        } else {
+            Intent(Settings.ACTION_SECURITY_SETTINGS)
+        }
+        activity.startActivity(intent)
+    }
+
     private fun install() {
         val update = available ?: return
         if (busy || !active || !ready) return
         work({ validateApk(update) }) {
             try {
-                if (!activity.packageManager.canRequestPackageInstalls()) {
+                if (!canInstallPackages()) {
                     permissionRequested = true
-                    activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}")))
+                    openInstallPermissionSettings()
                 } else {
                     val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.updates", apk)
                     activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")

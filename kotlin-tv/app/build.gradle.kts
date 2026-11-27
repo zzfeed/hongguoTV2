@@ -9,7 +9,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.hongguotv.nativeapp"
-        minSdk = 26
+        minSdk = 21
         targetSdk = 36
         // Release builds must set HONGGUOTV_VERSION_CODE and HONGGUOTV_VERSION_NAME; release.yml
         // derives both from the kotlin-vX.Y.Z tag. The fallback is deliberately far below every

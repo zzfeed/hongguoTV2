@@ -7,6 +7,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
@@ -79,7 +80,7 @@ class ArtworkLoader(context: Context) {
     }
 
     private val main = Handler(Looper.getMainLooper())
-    private val lowRam = context.applicationContext.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+    private val lowRam = activityManagerOf(context.applicationContext)?.isLowRamDevice == true
     private val cacheBytes = (if (lowRam) 4 else 8) * 1024 * 1024
     private val cache = object : LruCache<Key, Bitmap>(cacheBytes) {
         override fun sizeOf(key: Key, value: Bitmap) = value.allocationByteCount
@@ -93,7 +94,12 @@ class ArtworkLoader(context: Context) {
         Thread(runnable, "hongguotv-artwork").apply { priority = Thread.NORM_PRIORITY - 1 }
     }
     private val signal = Object()
-    private val pending = PriorityQueue<Job>(compareBy<Job> { it.priority }.thenBy { it.order })
+    // 队列排序规则单独提成字段：PriorityQueue 的「只收 Comparator」这个构造器是 API 24 才有的，
+    // 工程的 minSdk 是 21，无门禁地用它会被 lint 判成 NewApi。这里改走 API 1 就存在的
+    // 「初始容量 + Comparator」构造器，排序规则和入队出队行为与原写法完全一致（默认容量本就是 11，
+    // 队列又被 MAX_PENDING 限到 24，取 MAX_PENDING 做初始容量可以省掉一次扩容）。
+    private val jobOrder = compareBy<Job>({ it.priority }).thenBy { it.order }
+    private val pending = PriorityQueue<Job>(MAX_PENDING, jobOrder)
     private val jobs = mutableMapOf<Key, Job>()
     private val bindings = WeakHashMap<ImageView, Binding>()
     private var owner = 0L
@@ -311,5 +317,21 @@ class ArtworkLoader(context: Context) {
         if (result !== decoded) decoded.recycle()
         if (job.cancelled) { result.recycle(); return null }
         return result
+    }
+}
+/**
+ * 取系统的活动管理服务。
+ *
+ * `getSystemService(Class)` 这个重载是 API 23 才加上的，工程的 minSdk 是 21，
+ * 无门禁地调它会被 lint 判成 NewApi（Call requires API level 23: current min is 21）。
+ * 这里显式按版本分流：23 及以上走 Class 重载，21/22 走一直存在的字符串重载。
+ * 两条路拿到的是同一个 ActivityManager 实例，行为没有区别；取不到服务时返回 null，
+ * 由调用处的空值比较得到 false，与原来 `?: ` 之后的判定结果一致。
+ */
+private fun activityManagerOf(context: Context): ActivityManager? {
+    return if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.M) {
+        context.getSystemService(ActivityManager::class.java)
+    } else {
+        context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
     }
 }

@@ -3,6 +3,7 @@ package com.hongguotv.nativeapp
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,6 +16,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.widget.*
 import android.text.TextUtils
 import androidx.media3.common.*
@@ -404,8 +406,14 @@ class MainActivity: Activity() {
         // 协议档案：先用本地缓存换上生效的那份，再去后台拉远端那份。
         // 拉不到就用内置默认 —— 跟改造前的行为完全一样。
         profileUpdater=PlaybackProfileUpdater(this); profileUpdater.loadCached(); profileUpdater.refresh()
-        connectivity=getSystemService(ConnectivityManager::class.java)
-        runCatching { connectivity.registerDefaultNetworkCallback(networkCallback); networkRegistered=true }
+        connectivity=getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        // registerDefaultNetworkCallback 是 API 24 才有的；21—23 退回按 NetworkRequest 注册 ——
+        // 同样是「网络一变就回调」，只是匹配范围由请求描述而不是系统默认网络。
+        runCatching {
+            if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.N) connectivity.registerDefaultNetworkCallback(networkCallback)
+            else connectivity.registerNetworkCallback(NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(),networkCallback)
+            networkRegistered=true
+        }
         favoriteMonitor=FavoriteMonitor(library,repository) { refreshFavoriteLabels() }
         mediaSession=TvMediaSession(this,{ if(foreground && screen=="player") requestPlayback(true) },{ if(foreground && screen=="player") requestPlayback(false) },{ position -> if(foreground && screen=="player") seekTo(position) },{ direction -> skipEpisode(direction) },{ if(foreground && screen=="player") returnToDetail() })
         // 弹幕是锦上添花：拉不到就拉不到，绝不能打断播放，也不该在屏幕上留一条错误。
@@ -1806,7 +1814,11 @@ class MainActivity: Activity() {
             }
         }
     }
-    private fun networkAvailable(): Boolean = connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
+    // activeNetwork 是 API 23 才有的；21/22 退回用已废弃的 activeNetworkInfo 判断「是否已连接」。
+    @Suppress("DEPRECATION")
+    private fun networkAvailable(): Boolean =
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.M) connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
+        else connectivity.activeNetworkInfo?.isConnected==true
     private fun currentPosition(): Long = pendingSeek ?: player?.currentPosition?.takeIf { playbackReady } ?: startPosition
     private fun cancelRecovery() { main.removeCallbacks(retryRunnable); retryPending=false; autoRecovery=false }
     /**

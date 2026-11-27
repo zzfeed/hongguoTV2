@@ -17,6 +17,7 @@ import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import com.hongguotv.core.ApkCompatibility
 import com.hongguotv.core.ApkFacts
@@ -195,13 +196,23 @@ class AppUpdater(private val activity: Activity, private val idle: () -> Boolean
         val version = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
         val signers = (if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures)
             ?.map { it.toCharsString() }?.toSet().orEmpty()
+        val minSdk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            getApkMinSdk(info)
+        } else {
+            null
+        }
         return ApkFacts(
             packageName = info.packageName,
             versionCode = version,
             versionName = info.versionName ?: "",
-            minSdk = info.applicationInfo?.minSdkVersion?.takeIf { it > 0 },
+            minSdk = minSdk,
             signers = signers,
         )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun getApkMinSdk(info: PackageInfo): Int? {
+        return info.applicationInfo?.minSdkVersion?.takeIf { it > 0 }
     }
 
     /**

@@ -32,15 +32,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
       - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
-      - name: Download Maven mirror init script (workaround for Maven Central 429)
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/maven-mirror-init.gradle" \
-            https://raw.githubusercontent.com/HongguoTV/HongguoTV/main/.github/maven-mirror-init.gradle
 
       - name: Resolve version, guard monotonicity, restore signing key
         env:
@@ -124,8 +119,16 @@ jobs:
           HONGGUOTV_KEY_ALIAS: ${{ secrets.HONGGUOTV_KEY_ALIAS }}
           HONGGUOTV_KEY_PASSWORD: ${{ secrets.HONGGUOTV_KEY_PASSWORD }}
         run: ./kotlin-tv/gradlew -p kotlin-tv :core:test :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --console=plain
+       
+      - name: Verify channel APK minSdk matches manifest (21)
+        run: |
+          SDK=$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging kotlin-tv/app/build/outputs/apk/release/app-release.apk | sed -n "s/^minSdkVersion: *'\([0-9]*\)'.*/\1/p")
+          echo "channel APK minSdk=$SDK"
+          test "$SDK" = 21
 
       - name: Publish APK, source, and update manifest
+
+
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/publish-tv-update.py

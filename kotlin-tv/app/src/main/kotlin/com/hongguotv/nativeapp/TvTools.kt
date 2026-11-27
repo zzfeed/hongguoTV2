@@ -3,10 +3,12 @@ package com.hongguotv.nativeapp
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -20,6 +22,7 @@ import com.hongguotv.core.PhoneSearchServer
 import com.hongguotv.core.LibraryTransferServer
 import com.hongguotv.core.BackupData
 import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.util.concurrent.Executors
 
 /** Native modal controls kept separate from catalog/player navigation. */
@@ -192,12 +195,28 @@ class TvTools(private val activity: Activity) {
         startPhoneSession(next,content,address)
     }
     /** 电视在用的局域网地址；拿不到就是没连上 Wi-Fi 或有线。 */
-    private fun phoneAddress(): String? {
-        val connectivity=activity.getSystemService(ConnectivityManager::class.java)
-        val network=connectivity.activeNetwork
-        val capabilities=connectivity.getNetworkCapabilities(network) ?: return null
-        if(!(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))) return null
-        return connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }?.firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
+    private fun phoneAddress(): String? = lanAddressOf()
+    /**
+     * 取本机在局域网里的 IPv4 地址（只认私网地址）。
+     *
+     * `activeNetwork`、`getSystemService(Class)` 都是 API 23 才有的；21/22 上退回按 NetworkInfo
+     * 判断连接类型，再从网卡枚举私网地址。两条路都要求连的是 Wi-Fi 或有线、且拿到了一个私网
+     * IPv4 —— 手机输入和备份恢复都靠这个地址让手机连上来，地址错一眼就能看出（手机连不上）。
+     */
+    @Suppress("DEPRECATION")
+    private fun lanAddressOf(): String? {
+        val connectivity=activity.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.M) {
+            val network=connectivity.activeNetwork ?: return null
+            val capabilities=connectivity.getNetworkCapabilities(network) ?: return null
+            if(!(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))) return null
+            return connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }?.firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
+        }
+        val info=connectivity.activeNetworkInfo ?: return null
+        if(!info.isConnected || !(info.type==ConnectivityManager.TYPE_WIFI || info.type==ConnectivityManager.TYPE_ETHERNET)) return null
+        return NetworkInterface.getNetworkInterfaces()?.toList()?.asSequence()
+            ?.flatMap { it.inetAddresses.toList().asSequence() }
+            ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress && it.isSiteLocalAddress }?.hostAddress
     }
     /**
      * 开一个手机输入会话。owner 是这个会话所属的弹窗：弹窗已经被换掉（用户关了、
@@ -231,10 +250,8 @@ class TvTools(private val activity: Activity) {
         row.addView(instructions,LinearLayout.LayoutParams(0,-2,1f)); content.addView(row)
     }
     fun libraryTransfer(backup: String,anchor: View?,restore: (BackupData,Boolean)->Unit) {
-        val connectivity=activity.getSystemService(ConnectivityManager::class.java)
-        val network=connectivity.activeNetwork; val capabilities=connectivity.getNetworkCapabilities(network)
-        val address=connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }?.firstOrNull { it is Inet4Address && it.isSiteLocalAddress }?.hostAddress
-        if(address==null || capabilities==null || !(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))) {
+        val address=lanAddressOf()
+        if(address==null) {
             info("备份与恢复","请让电视和手机连接同一局域网后重试。",anchor); return
         }
         val content=column(); val status=label("正在生成二维码…"); content.addView(status)
